@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>진주에덴교회 밴드 참여 현황 자동 집계</title>
+<style>
+  body { margin: 0; background: #fff; color: #222; font: 16px/1.75 "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 36px 0 8px; padding-top: 12px; border-top: 1px solid #eee; }
+  .sub { color: #666; margin: 0; }
+  ol, ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f5f5f5; }
+  pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 14px; line-height: 1.5; }
+  #done { display: none; border: 2px solid #2b8a3e; border-radius: 8px; padding: 16px; margin: 0 0 24px; background: #ebfbee; }
+  #code { font: 18px/1.4 monospace; word-break: break-all; background: #fff; padding: 8px; border: 1px solid #ccc; }
+  button { font: inherit; padding: 8px 16px; margin-top: 8px; }
+  a { color: #1864ab; }
+</style>
+</head>
+<body>
+<main>
+  <!-- 담임목사가 밴드에서 연결에 동의하면, 밴드가 이 주소 뒤에 ?code=… 를 붙여 돌려보낸다. 그때만 보인다. -->
+  <section id="done">
+    <strong>✅ 밴드 연결 동의가 끝났습니다.</strong>
+    <p>아래의 인증 코드를 복사해서 담당자에게 보내 주십시오. 이 코드는 한 번만 사용할 수 있습니다.</p>
+    <div id="code"></div>
+    <button id="copy" type="button">복사</button>
+  </section>
+
+  <h1>밴드 참여 현황 자동 집계</h1>
+  <p class="sub">진주에덴교회 신앙 모임 밴드 · 비영리</p>
+
+  <h2>안내</h2>
+  <p>진주에덴교회 신앙 모임 밴드의 참여 현황 자동 집계를 소개하는 페이지입니다. 네이버 밴드 Open API로 교인의 참여 현황을 자동으로 집계하려고 합니다.</p>
+  <p>이 페이지의 주소는 Open API 신청서에 등록한 Redirect URI입니다. 담임목사가 밴드 화면에서 계정 연결에 동의하면 이 페이지로 돌아옵니다.</p>
+
+  <h2>현재 운영 방식</h2>
+  <ol>
+    <li>진주에덴교회는 기도 · 성경통독 · 성경공부 모임을 비공개 밴드로 운영합니다. 모든 밴드의 리더는 담임목사입니다.</li>
+    <li>밴드마다 담임목사나 모임을 맡은 교인이 매일 그날의 글을 올립니다.</li>
+    <li>교인은 그 글에 댓글로 참여 기록을 남깁니다. 기도 모임은 기도한 시간을 적습니다(예: 「1시간 기도했습니다」). 성경통독 모임은 읽은 성경 범위를 적습니다(예: 「누가복음 8~9장 읽었습니다」).</li>
+    <li>담임목사나 모임을 맡은 교인이 이 댓글을 하나씩 읽고, 사람별 · 날짜별 참여 기록을 손으로 집계합니다.</li>
+    <li>집계한 사람이 현황을 밴드에 올립니다. 교인은 이 현황을 보고 서로 격려합니다.</li>
+  </ol>
+  <p>밴드가 10개 정도이고 밴드마다 하루 댓글이 20~30개여서, 매일 댓글을 집계하는 데 많은 시간이 듭니다.</p>
+
+  <h2>자동 집계 방식</h2>
+  <p>지금 손으로 하는 댓글 집계와 현황 게시를 자동으로 처리합니다. 처리 순서는 다음과 같습니다.</p>
+  <ol>
+    <li>매일 0시가 지나면 한 번 실행됩니다.</li>
+    <li>밴드 Open API로 밴드마다 최근 글과 그 글의 댓글을 조회합니다.</li>
+    <li>댓글에서 기도 시간이나 성경 읽음 여부를 확인하고, 사람별 · 날짜별로 집계합니다.</li>
+    <li>집계 결과로 현황 글을 작성합니다. 현황 글에는 전날 참여 인원, 최근 1주일 참여 여부, 이달 합계가 들어갑니다.</li>
+    <li>밴드 Open API로 현황 글을 담임목사 이름으로 게시합니다. 밴드마다 하루 한 개입니다.</li>
+  </ol>
+  <p>집계를 맡은 사람은 더 이상 손으로 집계하지 않아도 됩니다. 교인은 지금처럼 댓글만 남기면 됩니다.</p>
+
+  <h2>계정 연결</h2>
+  <ul>
+    <li>모든 밴드의 리더인 담임목사 한 사람만 밴드 계정을 연결합니다. 연결은 밴드 Open API의 OAuth 절차로 한 번만 합니다.</li>
+    <li>그래서 현황 글은 모든 밴드에서 담임목사 이름으로 게시됩니다.</li>
+    <li>교인은 계정을 연결하지 않습니다.</li>
+    <li>처음에는 2개 밴드(기도 모임 · 성경통독 모임)에서 시작하고, 이후 같은 교회의 신앙 모임 밴드 약 10곳으로 넓힐 예정입니다.</li>
+  </ul>
+
+  <h2>사용 API</h2>
+  <table>
+    <tr><th>API</th><th>용도</th><th>호출 횟수</th></tr>
+    <tr><td>글 목록 조회</td><td>최근 며칠의 글을 찾습니다.</td><td>밴드마다 하루 1번</td></tr>
+    <tr><td>댓글 목록 조회</td><td>그 글의 댓글을 읽습니다.</td><td>최근 글마다 하루 1번</td></tr>
+    <tr><td>글쓰기</td><td>현황 글을 게시합니다.</td><td>밴드마다 하루 1번</td></tr>
+  </table>
+  <p>밴드 Open API만 사용합니다. 브라우저 자동화나 매크로는 사용하지 않습니다.</p>
+
+  <h2>운영 원칙</h2>
+  <ul>
+    <li>광고 · 홍보 · 영리 목적이 없습니다.</li>
+    <li>현황 글을 게시할 때 알림(푸시)을 보내지 않습니다.</li>
+    <li>댓글은 참여 집계에만 사용합니다. 교인의 이름과 댓글을 밴드 밖에 공개하거나 다른 곳에 넘기지 않습니다.</li>
+    <li>담임목사가 연결을 해제하면 자동 집계를 멈춥니다.</li>
+  </ul>
+
+  <h2>현황 글 예시</h2>
+  <p>아래는 기도 모임 밴드에 게시되는 현황 글의 예시입니다. 이름은 가상입니다.</p>
+<pre>어제는 18명이 31시간 기도했습니다.
+
+▶ 최근 1주일 11/16(월) ~ 11/22(주)
+● 기도함 ○ 안 함 · (이달 합계 시간)
+
+김OO ●●●●●●● (24)
+박OO ●●○●●●○ (18)
+이OO ○●●●○●○ (11)</pre>
+  <ul>
+    <li>한 줄은 교인 한 사람입니다.</li>
+    <li>점 7개는 최근 7일입니다. 왼쪽이 가장 오래된 날입니다.</li>
+    <li>괄호 안의 숫자는 이달의 기도 시간 합계입니다.</li>
+    <li>휴대폰 화면 한 줄에 들어가도록 짧게 만들었습니다.</li>
+  </ul>
+
+  <h2>교회 정보</h2>
+  <ul>
+    <li>교회: 진주에덴교회</li>
+    <li>주소: (52655) 경상남도 진주시 상봉대룡길 54</li>
+    <li>홈페이지: <a href="https://www.jinjueden.com/">https://www.jinjueden.com/</a></li>
+  </ul>
+
+  <h2>소스 코드</h2>
+  <p>이 페이지와 자동 집계의 소스 코드는 공개되어 있습니다.<br>
+  <a href="https://github.com/edench2010/bandcount-api">https://github.com/edench2010/bandcount-api</a></p>
+</main>
+<script>
+  const code = new URLSearchParams(location.search).get("code");
+  if (code) {
+    document.getElementById("code").textContent = code;
+    document.getElementById("done").style.display = "block";
+    document.getElementById("copy").onclick = () => navigator.clipboard.writeText(code);
+  }
+</script>
+</body>
+</html>
