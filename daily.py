@@ -6,9 +6,15 @@
 config.json(비공개 · 이 저장소에 두지 않음):
   {"lookback_days": 3, "bands": [{"name": "…", "kind": "prayer|bible", "band_key": "…",
     "style": "daily", "mark": true(통독), "day_one": "2025-09-08"(기도 N일째),
-    "ment": "env:MENT_URL", "names": {"밴드 이름": "표 이름"}, "exclude": [], "members": [], "readonly": false}]}
+    "ment": "env:MENT_URL", "names": {"밴드 이름": "표 이름"}, "exclude": [], "members": [], "readonly": false,
+    "orders_band_key": "…", "orders_post_key": "…"(관리 밴드의 이 밴드 몫 지시 글)}]}
+
+명단(표에 나오는 사람) = 지난달 참여자 + 이달 댓글 단 사람 + 「넣기」 − 「빼기」 · exclude.
+지난달 참여자는 말일 몫 글(1일 글)을 게시할 때 active-<밴드 이름>.json(config 옆)에 남긴다.
+→ 지난달 기록이 0인 사람은 1일 글에 빈 줄로 한 번 나오고, 그 뒤 명단에서 빠진다(사용자 2026-11-20).
 """
 import argparse
+import calendar
 import datetime as dt
 import json
 import os
@@ -17,7 +23,7 @@ import urllib.request
 
 import band_api as api
 from report import build_daily, week_dots
-from tally import DAILY, TITLE, load_ment, tally
+from tally import DAILY, TITLE, apply_fixes, apply_orders, load_ment, short_name, tally
 
 OUT = pathlib.Path("out")
 
@@ -52,8 +58,19 @@ def read(band, since):
     return comments, titles, firsts
 
 
+def read_orders(band):
+    """관리 밴드 지시 글에 리더 · 공동리더가 단 댓글 [(글, 쓴 때)]. 역할로 가린다 → 이름을 흉내 내도 안 통한다."""
+    if not band.get("orders_post_key"):
+        return []
+    return [(c["text"], c["time"]) for c in api.comments(band["orders_band_key"], band["orders_post_key"])
+            if c["role"] in ("leader", "coleader")]
+
+
 def do_band(band, day, cfg, dry_run):
     today = day + dt.timedelta(days=1)
+    tag = f"[{band['name']}]"
+    kind = "mark" if band.get("mark") else band["kind"]  # 지시(수정) 값 읽는 법
+    band, fixes, notes = apply_orders(read_orders(band), band, kind)
     title = build_daily({}, day, band).split("\n")[0]
     week_start = day - dt.timedelta(days=6)
     since = min(day.replace(day=1), week_start) - dt.timedelta(days=cfg.get("lookback_days", 3))
@@ -64,9 +81,15 @@ def do_band(band, day, cfg, dry_run):
     if titles:
         band = dict(band, titles=titles)
     data, flags = tally(band["kind"], comments, day, band)
+    known = {short_name(c["name"], band.get("names", {})) for c in comments} | set(band["members"])
+    notes += apply_fixes(data, flags, fixes, kind, day, known, tag)
     prev = tally(band["kind"], comments, week_start, band)[0] if week_start.month != day.month else {}
     ment = load_ment(band, today) if band.get("ment") else ""
-    members = [n for n in band.get("members", []) if n not in band.get("exclude", [])]
+    active = cfg["_dir"] / f"active-{band['name']}.json"
+    last = json.loads(active.read_text(encoding="utf-8")) if active.exists() else {}
+    prev_month = (day.replace(day=1) - dt.timedelta(days=1)).strftime("%Y-%m")
+    members = [n for n in set(band["members"]) | set(last.get("names", []) if last.get("month") == prev_month else [])
+               if n not in band.get("exclude", [])]
     text = build_daily(data, day, band, ment or "") + "\n\n" + week_dots(data, prev, day, band["kind"], members)
     OUT.mkdir(exist_ok=True)
     (OUT / f"{band['name']}_{day}.txt").write_text(text, encoding="utf-8")
@@ -74,7 +97,11 @@ def do_band(band, day, cfg, dry_run):
     if not dry_run and not band.get("readonly"):
         api.write(band["band_key"], text)
         print(f"[{band['name']}] 게시함")
-    msgs = [f"[{band['name']}] 확인 필요: {n} 「{t}」" for n, t in flags]
+        if day.day == calendar.monthrange(day.year, day.month)[1]:  # 1일 글을 올렸다 → 이달 참여자를 다음 달 명단으로
+            active.write_text(json.dumps({"month": day.strftime("%Y-%m"), "names": sorted(data)}, ensure_ascii=False), encoding="utf-8")
+    since_last = dt.datetime.now(api.KST).replace(tzinfo=None) - dt.timedelta(days=1)  # 하루 한 번 돈다 → 하루 안의 지시 결과만 알린다
+    msgs = [msg for when, msg in notes if when >= since_last]
+    msgs += [f"{tag} 확인 필요: {n} 「{t}」" for n, t in flags]
     if ment is None:
         msgs.append(f"[{band['name']}] 멘트 문서를 못 읽어 멘트 없이 만들었습니다(문서 공유 설정을 보세요)")
     return msgs
@@ -87,6 +114,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     cfg = json.loads(pathlib.Path(a.config).read_text(encoding="utf-8"))
+    cfg["_dir"] = pathlib.Path(a.config).resolve().parent
     day = dt.date.fromisoformat(a.day) if a.day else dt.datetime.now(api.KST).date() - dt.timedelta(days=1)
     msgs, failed = [], []
     for band in cfg["bands"]:

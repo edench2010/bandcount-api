@@ -163,6 +163,98 @@ def tally(kind, comments, day, band=None):
     return data, flags
 
 
+# 관리 밴드 지시(목사님만 있는 비공개 밴드의 지시 글 댓글): 수정 · 이름 · 넣기 · 빼기
+ORDER = re.compile(r"^\s*(수정|이름|빼기|넣기)\s*[:：]?\s*(.*?)\s*$")
+WORDS = ("수정", "이름", "빼기", "넣기")
+ARROW = re.compile(r"\s*(?:=|→|->|⇒)\s*")
+
+
+def clean_name(s):
+    return re.sub(r"\s*님$", "", s.strip())
+
+
+def order_value(text, kind):
+    """「2」「2방」「두방」「1시간 반」「3장」 → 분(기도) · 장(성경). 통독방(mark): 「○」「1」「읽음」 → 1 · 「0」「x」 → 0. 못 읽으면 None."""
+    t = text.strip()
+    if kind == "mark":
+        return 1 if t in ("○", "o", "O", "1", "읽음") else 0 if t in ("0", "x", "X", "×", "안읽음") else None
+    if re.fullmatch(r"\d+(?:\.\d+)?", t):
+        return round(float(t) * 60) if kind == "prayer" else int(float(t))
+    return prayer_minutes(t) if kind == "prayer" else chapters(t)
+
+
+def show(v, kind):
+    return "○" if kind == "mark" else f"{v / 60:g}방" if kind == "prayer" else f"{v}장"
+
+
+def apply_orders(orders, band, kind="prayer"):
+    """공지 글 지시(notice.md)를 band 설정 사본에 반영한다. 양식을 조금 틀려도 알아듣는다(쌍점 · 님 · 화살표 · 「2방」「두방」 · 「10월 25일」「25일」「어제」).
+    돌려줌: band 사본, fixes [(날짜 또는 None(빼기 확인용), 이름, 값, 쓴 때, 줄)], notes [(쓴 때, 알림 글)]."""
+    band = dict(band, names=dict(band.get("names", {})), exclude=list(band.get("exclude", [])),
+                members=list(band.get("members", [])))
+    tag = f"[{band.get('name', '')}]"
+    fixes, notes = [], []
+    for text, when in orders:
+        for line in text.splitlines():
+            if not any(w in line for w in WORDS):
+                continue  # 지시가 아닌 말은 그냥 둔다
+            m, ok = ORDER.match(line), False
+            if m:
+                cmd, rest = m[1], m[2]
+                if cmd == "이름" and ARROW.search(rest):
+                    a, b = ARROW.split(rest, 1)
+                    band["names"][a.strip()] = clean_name(b)
+                    notes.append((when, f"{tag} 반영함: {a.strip()} → {clean_name(b)}"))
+                    ok = True
+                elif cmd == "넣기" and rest:
+                    band["members"].append(clean_name(rest))
+                    notes.append((when, f"{tag} 반영함: 표에 {clean_name(rest)} 줄을 둡니다"))
+                    ok = True
+                elif cmd == "빼기" and rest:
+                    band["exclude"].append(clean_name(rest))
+                    fixes.append((None, clean_name(rest), None, when, line.strip()))
+                    ok = True
+                elif cmd == "수정":
+                    d = when.date() - dt.timedelta(days=1)  # 날짜를 빼면 지시를 쓴 날의 어제
+                    dm = DATE_MARK.search(rest)
+                    if dm:
+                        d = mark_date(dm, when.date())
+                        rest = (rest[:dm.start()] + " " + rest[dm.end():]).strip()
+                    parts = rest.split(None, 1)
+                    if d and len(parts) == 2 and (v := order_value(parts[1], kind)) is not None:
+                        fixes.append((d, clean_name(parts[0]), v, when, line.strip()))
+                        ok = True
+            if not ok:
+                notes.append((when, f"{tag} 이 지시를 못 알아들었습니다: {line.strip()}\n양식 예: 수정 10/25 박민수 2"))
+    return band, fixes, notes
+
+
+def apply_fixes(data, flags, fixes, kind, day, known, tag=""):
+    """「수정」을 셈에 덮어쓴다(0 = 뺌). 표에 없는 이름은 반영하지 않고 알린다. 고친 사람의 그날 확인 필요는 지운다.
+    돌려줌: notes [(쓴 때, 알림 글)]."""
+    notes = []
+    for d, name, v, when, line in fixes:
+        if name not in known:
+            notes.append((when, f"{tag} 「{name}」을 표에서 못 찾아 반영하지 않았습니다: {line}\n"
+                                f"이름을 확인하세요. 이번 달 댓글이 없는 분이면 먼저 「넣기 {name}」를 다세요."))
+            continue
+        if d is None:  # 빼기: 이름 확인만
+            notes.append((when, f"{tag} 반영함: 표에서 {name} 줄을 뺍니다"))
+            continue
+        if (d.year, d.month) != (day.year, day.month) or d > day:
+            continue
+        if v:
+            data.setdefault(name, {})[d.day] = v
+        elif name in data:
+            data[name].pop(d.day, None)
+            if not data[name]:
+                del data[name]
+        notes.append((when, f"{tag} 반영함: {d.month}/{d.day} {name} {show(v, kind) if v else '뺌'}"))
+        if d == day:
+            flags[:] = [f for f in flags if f[0] != name]
+    return notes
+
+
 DOC_DATE = re.compile(r"^\s*(?:(\d{4})\s*[./-]\s*)?(\d{1,2})\s*(?:[./-]|월)\s*(\d{1,2})\s*일?\.?\s*(?:\(.\))?\s*$")
 
 
