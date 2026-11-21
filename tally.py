@@ -194,7 +194,8 @@ def apply_orders(orders, band, kind="prayer"):
                 members=list(band.get("members", [])))
     tag = f"[{band.get('name', '')}]"
     fixes, notes = [], []
-    for text, when in orders:
+    name = lambda s: short_name(clean_name(s), band["names"])  # 댓글 이름과 같은 꼴로(「홍길동(OO상회)」 → 「홍길동」)
+    for text, when in sorted(orders, key=lambda o: o[1]):  # 쓴 차례대로 → 나중 지시가 이긴다(빼기 뒤 넣기 = 다시 넣음)
         for line in text.splitlines():
             if not any(w in line for w in WORDS):
                 continue  # 지시가 아닌 말은 그냥 둔다
@@ -207,12 +208,16 @@ def apply_orders(orders, band, kind="prayer"):
                     notes.append((when, f"{tag} 반영함: {a.strip()} → {clean_name(b)}"))
                     ok = True
                 elif cmd == "넣기" and rest:
-                    band["members"].append(clean_name(rest))
-                    notes.append((when, f"{tag} 반영함: 표에 {clean_name(rest)} 줄을 둡니다"))
+                    n = name(rest)
+                    band["members"].append(n)
+                    band["exclude"] = [x for x in band["exclude"] if x != n]
+                    notes.append((when, f"{tag} 반영함: 표에 {n} 줄을 둡니다"))
                     ok = True
                 elif cmd == "빼기" and rest:
-                    band["exclude"].append(clean_name(rest))
-                    fixes.append((None, clean_name(rest), None, when, line.strip()))
+                    n = name(rest)
+                    band["exclude"].append(n)
+                    band["members"] = [x for x in band["members"] if x != n]
+                    notes.append((when, f"{tag} 반영함: 표에서 {n} 줄을 뺍니다"))
                     ok = True
                 elif cmd == "수정":
                     d = when.date() - dt.timedelta(days=1)  # 날짜를 빼면 지시를 쓴 날의 어제
@@ -222,33 +227,34 @@ def apply_orders(orders, band, kind="prayer"):
                         rest = (rest[:dm.start()] + " " + rest[dm.end():]).strip()
                     parts = rest.split(None, 1)
                     if d and len(parts) == 2 and (v := order_value(parts[1], kind)) is not None:
-                        fixes.append((d, clean_name(parts[0]), v, when, line.strip()))
+                        fixes.append((d, name(parts[0]), v, when, line.strip()))
                         ok = True
             if not ok:
                 notes.append((when, f"{tag} 이 지시를 못 알아들었습니다: {line.strip()}\n양식 예: 수정 10/25 박민수 2"))
     return band, fixes, notes
 
 
-def apply_fixes(data, flags, fixes, kind, day, known, tag=""):
-    """「수정」을 셈에 덮어쓴다(0 = 뺌). 표에 없는 이름은 반영하지 않고 알린다. 고친 사람의 그날 확인 필요는 지운다.
-    돌려줌: notes [(쓴 때, 알림 글)]."""
+def apply_fixes(data, flags, fixes, kind, day, known, tag="", prev=None):
+    """「수정」을 셈에 덮어쓴다(0 = 뺌). 이달 날짜는 data에, 지난달 날짜는 prev(1주일 점)에. 표에 없는 이름 · 다른 달 날짜는 반영하지 않고 알린다.
+    고친 사람의 그날 확인 필요는 지운다. 돌려줌: notes [(쓴 때, 알림 글)]."""
     notes = []
+    pm = day.replace(day=1) - dt.timedelta(days=1)
     for d, name, v, when, line in fixes:
         if name not in known:
             notes.append((when, f"{tag} 「{name}」을 표에서 못 찾아 반영하지 않았습니다: {line}\n"
                                 f"이름을 확인하세요. 이번 달 댓글이 없는 분이면 먼저 「넣기 {name}」를 다세요."))
             continue
-        if d is None:  # 빼기: 이름 확인만
-            notes.append((when, f"{tag} 반영함: 표에서 {name} 줄을 뺍니다"))
-            continue
-        if (d.year, d.month) != (day.year, day.month) or d > day:
+        target = data if (d.year, d.month) == (day.year, day.month) and d <= day else \
+            prev if prev is not None and (d.year, d.month) == (pm.year, pm.month) else None
+        if target is None:
+            notes.append((when, f"{tag} 지난달이나 이달(어제까지) 날짜가 아니어서 반영하지 않았습니다: {line}"))
             continue
         if v:
-            data.setdefault(name, {})[d.day] = v
-        elif name in data:
-            data[name].pop(d.day, None)
-            if not data[name]:
-                del data[name]
+            target.setdefault(name, {})[d.day] = v
+        elif name in target:
+            target[name].pop(d.day, None)
+            if not target[name]:
+                del target[name]
         notes.append((when, f"{tag} 반영함: {d.month}/{d.day} {name} {show(v, kind) if v else '뺌'}"))
         if d == day:
             flags[:] = [f for f in flags if f[0] != name]
@@ -294,3 +300,16 @@ def load_ment(band, today):
     if not ment:
         print("멘트 없음:", today)
     return ment
+
+
+if __name__ == "__main__":  # 자체 확인: 지시 차례 · 이름 꼴 · 지난달 수정
+    t = lambda d, h=9: dt.datetime(2026, 12, d, h)
+    orders = [("넣기 이가", t(2)), ("빼기 이가", t(1)), ("빼기 최다(OO상회)", t(1)), ("수정 11/30 박나 2", t(2)), ("수정 9/30 박나 2", t(2))]
+    band, fixes, notes = apply_orders(orders, {"name": "시험"}, "prayer")
+    assert "이가" in band["members"] and "이가" not in band["exclude"], band  # 빼기 뒤 넣기 = 다시 넣음
+    assert band["exclude"] == ["최다"], band
+    data, prev = {}, {}
+    notes = apply_fixes(data, [], fixes, "prayer", dt.date(2026, 12, 1), {"박나"}, "", prev)
+    assert prev == {"박나": {30: 120}} and data == {}, (data, prev)
+    assert any("반영하지 않았습니다: 수정 9/30" in n for _, n in notes), notes
+    print("OK")
