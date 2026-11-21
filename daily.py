@@ -11,7 +11,7 @@ config.json(비공개 · 이 저장소에 두지 않음):
 
 명단(표에 나오는 사람) = 지난달 참여자 + 이달 댓글 단 사람 + 「넣기」 − 「빼기」 · exclude.
 지난달 참여자는 말일 몫 글(1일 글)을 게시할 때 active-<밴드 이름>.json(config 옆)에 남긴다.
-→ 지난달 기록이 0인 사람은 1일 글에 빈 줄로 한 번 나오고, 그 뒤 명단에서 빠진다(사용자 2026-11-20).
+→ 1일 글(말일 몫)에는 그달 기록이 있는 사람만 나온다(「넣기」도 기록이 없으면 안 나옴). 기록이 0이면 빠진다(사용자 2026-11-20 「1일 볼 필요가 없어」).
 """
 import argparse
 import calendar
@@ -88,8 +88,9 @@ def do_band(band, day, cfg, dry_run):
     active = cfg["_dir"] / f"active-{band['name']}.json"
     last = json.loads(active.read_text(encoding="utf-8")) if active.exists() else {}
     prev_month = (day.replace(day=1) - dt.timedelta(days=1)).strftime("%Y-%m")
-    members = [n for n in set(band["members"]) | set(last.get("names", []) if last.get("month") == prev_month else [])
-               if n not in band.get("exclude", [])]
+    month_end = day.day == calendar.monthrange(day.year, day.month)[1]
+    carry = last.get("names", []) if last.get("month") == prev_month else []
+    members = [] if month_end else [n for n in set(band["members"]) | set(carry) if n not in band.get("exclude", [])]  # 1일 글엔 그달 기록이 있는 사람만
     text = build_daily(data, day, band, ment or "") + "\n\n" + week_dots(data, prev, day, band["kind"], members)
     OUT.mkdir(exist_ok=True)
     (OUT / f"{band['name']}_{day}.txt").write_text(text, encoding="utf-8")
@@ -97,7 +98,7 @@ def do_band(band, day, cfg, dry_run):
     if not dry_run and not band.get("readonly"):
         api.write(band["band_key"], text)
         print(f"[{band['name']}] 게시함")
-        if day.day == calendar.monthrange(day.year, day.month)[1]:  # 1일 글을 올렸다 → 이달 참여자를 다음 달 명단으로
+        if month_end:  # 1일 글을 올렸다 → 이달 참여자를 다음 달 명단으로
             active.write_text(json.dumps({"month": day.strftime("%Y-%m"), "names": sorted(data)}, ensure_ascii=False), encoding="utf-8")
     since_last = dt.datetime.now(api.KST).replace(tzinfo=None) - dt.timedelta(days=1)  # 하루 한 번 돈다 → 하루 안의 지시 결과만 알린다
     msgs = [msg for when, msg in notes if when >= since_last]
